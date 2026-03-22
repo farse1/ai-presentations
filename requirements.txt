@@ -1,0 +1,6 @@
+streamlit
+python-pptx
+langchain-openai
+langchain-community
+tavily-python
+pymupdf
