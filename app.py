@@ -8,7 +8,7 @@ import json
 import os
 import re
 
-st.set_page_config(page_title="AI Presentation & PDF Creator", page_icon="📊")
+st.set_page_config(page_title="Presentation Generator", page_icon="📊")
 
 # --- PPTX GENERATOR ---
 def create_pptx(slides_data):
