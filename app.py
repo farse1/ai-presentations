@@ -9,7 +9,7 @@ import os
 import re
 
 # Set page config once at the very top
-st.set_page_config(page_title="AI Presentation & PDF Creator", page_icon="📊", layout="wide")
+st.set_page_config(page_title="AI Presentation Generator", page_icon="📊", layout="wide")
 
 # --- 1. API KEY LOGIC (Fixes the Duplicate Error) ---
 # Check Streamlit Secrets first
