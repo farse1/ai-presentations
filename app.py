@@ -1,5 +1,6 @@
 import streamlit as st
 from pptx import Presentation
+from fpdf import FPDF
 import fitz  
 from langchain_openai import ChatOpenAI
 from langchain_community.tools.tavily_search import TavilySearchResults
@@ -7,136 +8,111 @@ import json
 import os
 import re
 
-st.set_page_config(page_title="AI Presentation Creator", page_icon="📊")
+st.set_page_config(page_title="AI Presentation & PDF Creator", page_icon="📊")
 
-def extract_text_from_pptx(file):
-    try:
-        prs = Presentation(file)
-        text_content = []
-        for slide in prs.slides:
-            for shape in slide.shapes:
-                if hasattr(shape, "text"):
-                    text_content.append(shape.text)
-        return "\n".join(text_content)
-    except Exception as e:
-        return f"Error reading PPTX: {e}"
-
-def extract_text_from_pdf(file):
-    try:
-        doc = fitz.open(stream=file.read(), filetype="pdf")
-        return "\n".join([page.get_text() for page in doc])
-    except Exception as e:
-        return f"Error reading PDF: {e}"
-
+# --- PPTX GENERATOR ---
 def create_pptx(slides_data):
     prs = Presentation()
     for slide_info in slides_data:
-        # Use Title and Content layout (index 1)
         slide_layout = prs.slide_layouts[1]
         slide = prs.slides.add_slide(slide_layout)
-        
-        # Set Title
         slide.shapes.title.text = slide_info.get("title", "Presentation Slide")
-        
-        # Set Content
         body_shape = slide.placeholders[1]
         body_shape.text = slide_info.get("content", "")
     
-    output_path = "generated_presentation.pptx"
-    prs.save(output_path)
-    return output_path
+    path = "generated_presentation.pptx"
+    prs.save(path)
+    return path
 
-# --- UI Layout ---
-st.title("📊 AI Presentation Generator")
+# --- PDF GENERATOR ---
+def create_pdf(slides_data):
+    pdf = FPDF(orientation="landscape", unit="mm", format="A4")
+    pdf.set_auto_page_break(auto=True, margin=15)
+    
+    for slide_info in slides_data:
+        pdf.add_page()
+        
+        # Title Background
+        pdf.set_fill_color(200, 220, 255)
+        pdf.rect(0, 0, 297, 30, 'F')
+        
+        # Title Text
+        pdf.set_font("Arial", 'B', 24)
+        pdf.set_xy(10, 10)
+        pdf.cell(0, 10, slide_info.get("title", "Slide"), ln=True)
+        
+        # Content Text
+        pdf.set_font("Arial", size=14)
+        pdf.set_xy(10, 40)
+        # multi_cell handles line breaks (\n) automatically
+        pdf.multi_cell(0, 10, slide_info.get("content", ""))
+        
+    path = "generated_presentation.pdf"
+    pdf.output(path)
+    return path
+
+# --- REFERENCE EXTRACTION ---
+def extract_text(file):
+    if file.name.endswith("pptx"):
+        prs = Presentation(file)
+        return "\n".join([shape.text for slide in prs.slides for shape in slide.shapes if hasattr(shape, "text")])
+    else:
+        doc = fitz.open(stream=file.read(), filetype="pdf")
+        return "\n".join([page.get_text() for page in doc])
+
+# --- UI LAYOUT ---
+st.title("📊 AI Presentation & PDF Generator")
 
 with st.sidebar:
-    st.header("API Configuration")
+    st.header("API Keys")
     o_api = st.text_input("OpenAI API Key", type="password")
     t_api = st.text_input("Tavily API Key", type="password")
     num_slides = st.slider("Number of Slides", 5, 20, 10)
-    st.divider()
-    st.markdown("### How to use:")
-    st.write("1. Enter Keys\n2. Enter Topic\n3. Upload PDF/PPTX (Optional)\n4. Click Generate")
+    st.info("Check OpenAI balance at platform.openai.com")
 
-topic = st.text_input("What is the presentation topic?", placeholder="e.g. The Future of Renewable Energy")
-ref_file = st.file_uploader("Optional: Upload reference (PDF or PPTX)", type=["pdf", "pptx"])
+topic = st.text_input("Enter Topic:", placeholder="e.g. Modern Architecture")
+ref_file = st.file_uploader("Upload reference (Optional)", type=["pdf", "pptx"])
 
-if st.button("Generate Presentation"):
+if st.button("Generate Files"):
     if not o_api or not t_api or not topic:
-        st.warning("⚠️ Please provide both API keys and a topic.")
+        st.warning("Please enter keys and topic.")
     else:
         try:
-            with st.spinner("Step 1: Gathering information..."):
+            with st.spinner("Searching and generating content..."):
                 os.environ["TAVILY_API_KEY"] = t_api
                 
-                # 1. Handle reference file
-                ref_content = ""
-                if ref_file:
-                    if ref_file.name.endswith("pptx"):
-                        ref_content = extract_text_from_pptx(ref_file)
-                    else:
-                        ref_content = extract_text_from_pdf(ref_file)
-                
-                # 2. Search Web
+                # Context gathering
+                ref_text = extract_text(ref_file)[:1500] if ref_file else ""
                 search = TavilySearchResults(max_results=3)
                 web_data = search.invoke(topic)
-
-            with st.spinner("Step 2: AI is writing your slides..."):
-                # Use gpt-4o-mini for better rate limits
-                llm = ChatOpenAI(model="gpt-4o-mini", api_key=o_api, temperature=0.7)
                 
-                # NOTE: We use double curly braces {{ }} to avoid the f-string 'Invalid format specifier' error
+                # AI Logic
+                llm = ChatOpenAI(model="gpt-4o-mini", api_key=o_api)
                 prompt = f"""
-                You are an expert presentation consultant.
-                Create a presentation based on this topic: {topic}
-                
-                Reference Material from user: {ref_content[:1500]}
-                Recent Web Research: {web_data}
-                
-                Create exactly {num_slides} slides. 
-                Return the response ONLY as a JSON array of objects. 
-                Each object must have "title" and "content" keys.
-                
-                Example format:
-                [
-                  {{
-                    "title": "Slide Title Here",
-                    "content": "Bullet point 1\\nBullet point 2\\nBullet point 3"
-                  }}
-                ]
+                Create a presentation on: {topic}
+                Reference: {ref_text}
+                Web: {web_data}
+                Slides: {num_slides}
+                Return ONLY a JSON array: [{{ "title": "...", "content": "..." }}]
                 """
                 
                 res = llm.invoke(prompt)
+                clean_json = re.sub(r"```json|```", "", res.content).strip()
+                slides_json = json.loads(clean_json)
                 
-                # Clean the response to ensure it's valid JSON
-                clean_json_str = res.content.strip()
-                if "```json" in clean_json_str:
-                    clean_json_str = clean_json_str.split("```json")[1].split("```")[0].strip()
-                elif "```" in clean_json_str:
-                    clean_json_str = clean_json_str.split("```")[1].split("```")[0].strip()
+                # File creation
+                pptx_file = create_pptx(slides_json)
+                pdf_file = create_pdf(slides_json)
                 
-                slides_json = json.loads(clean_json_str)
+                st.success(f"✅ Generated {len(slides_json)} slides!")
                 
-                # 3. Create PPTX
-                pptx_path = create_pptx(slides_json)
-                
-                st.success(f"✅ Generated {len(slides_json)} slides successfully!")
-                
-                with open(pptx_path, "rb") as file:
-                    st.download_button(
-                        label="📥 Download PowerPoint File",
-                        data=file,
-                        file_name=f"{topic.replace(' ', '_')}.pptx",
-                        mime="application/vnd.openxmlformats-officedocument.presentationml.presentation"
-                    )
-
-        except json.JSONDecodeError:
-            st.error("❌ The AI returned an invalid data format. Please try clicking Generate again.")
+                col1, col2 = st.columns(2)
+                with col1:
+                    with open(pptx_file, "rb") as f:
+                        st.download_button("📥 Download PPTX", f, file_name=f"{topic}.pptx")
+                with col2:
+                    with open(pdf_file, "rb") as f:
+                        st.download_button("📥 Download PDF", f, file_name=f"{topic}.pdf")
+                        
         except Exception as e:
-            error_msg = str(e)
-            if "insufficient_quota" in error_msg:
-                st.error("❌ OpenAI Account Error: You have $0 balance. Please add credits at platform.openai.com.")
-            elif "rate_limit" in error_msg.lower():
-                st.error("❌ Rate Limit: You are making requests too fast or your account tier is too low.")
-            else:
-                st.error(f"⚠️ An error occurred: {error_msg}")
+            st.error(f"Error: {str(e)}")
